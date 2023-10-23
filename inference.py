@@ -44,8 +44,8 @@ def gkern(kernlen=21, nsig=3):
     return kern2d/kern2d.sum()
 
 class InferenceArgumentParser(Tap):
-    segment_id: str ='20230925002745'
-    segment_path:str='./eval_scrolls'
+    segment_id: str ='20230827161847'
+    segment_path:str='/tmp/path'
     model_path:str= 'outputs/vesuvius/pretraining_all/vesuvius-models/valid_20230827161847_0_fr_i3depoch=7.ckpt'
     out_path:str='./'
     stride: int = 2
@@ -201,6 +201,7 @@ def read_image_mask(fragment_id,start_idx=18,end_idx=38,rotation=0):
     for i in idxs:
         
         image = cv2.imread(f"{dataset_path}/{fragment_id}/layers/{i:02}.tif", 0)
+        print(f"Tried to read {dataset_path}/{fragment_id}/layers/{i:02}.tif")
 
         pad0 = (CFG.tile_size - image.shape[0] % CFG.tile_size)
         pad1 = (CFG.tile_size - image.shape[1] % CFG.tile_size)
@@ -214,7 +215,7 @@ def read_image_mask(fragment_id,start_idx=18,end_idx=38,rotation=0):
         images=images[:,:,::-1]
     fragment_mask=None
     if os.path.exists(f'{dataset_path}/{fragment_id}/{fragment_id}_mask.png'):
-        fragment_mask=cv2.imread(CFG.comp_dataset_path + f"{dataset_path}/{fragment_id}/{fragment_id}_mask.png", 0)
+        fragment_mask=cv2.imread(f"{dataset_path}/{fragment_id}/{fragment_id}_mask.png", 0)
         fragment_mask = np.pad(fragment_mask, [(0, pad0), (0, pad1)], constant_values=0)
         kernel = np.ones((16,16),np.uint8)
         fragment_mask = cv2.erode(fragment_mask,kernel,iterations = 1)
@@ -572,16 +573,27 @@ def predict_fn(test_loader, model, device, test_xyxys,pred_shape):
             mask_pred[y1:y2, x1:x2] += np.multiply(F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy(),kernel)
             mask_count[y1:y2, x1:x2] += np.ones((CFG.size, CFG.size))
 
+        if step % 10 == 0:
+            mask_copy = np.divide(mask_pred, mask_count, out=np.zeros_like(mask_pred), where=mask_count!=0)
+            mask_copy=np.clip(np.nan_to_num(mask_copy),a_min=0,a_max=1)
+            mask_copy/=mask_copy.max()
+            mask_copy=(mask_copy*255).astype(np.uint8)
+            mask_copy=Image.fromarray(mask_copy)
+            mask_copy.save(f'{args.out_path}/{fragment_id}_{args.stride}_{args.start_idx}_progress.png')
+
     mask_pred /= mask_count
     # mask_pred/=mask_pred.max()
     return mask_pred
 
-fragments=os.listdir('./eval_scrolls')
+fragments=os.listdir(args.segment_path)
 fragment_id=args.segment_id
 
+print("Loading data")
 test_loader,test_xyxz,test_shape,fragment_mask=get_img_splits(fragment_id,args.start_idx,args.start_idx+30,0)
+print("Loading model")
 model=RegressionPLModel.load_from_checkpoint(args.model_path,strict=False)
-model.cuda()
+print("Running model")
+#model.cuda()
 model.eval()
 mask_pred= predict_fn(test_loader, model, device, test_xyxz,test_shape)
 mask_pred=np.clip(np.nan_to_num(mask_pred),a_min=0,a_max=1)
