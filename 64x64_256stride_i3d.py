@@ -91,7 +91,7 @@ class CFG:
     # lr = 1e-4 / warmup_factor
     lr = 2e-5
     # ============== fold =============
-    valid_id = '20230827161847'
+    valid_id = '20230827161847xxx'
 
     # objective_cv = 'binary'  # 'binary', 'multiclass', 'regression'
     metric_direction = 'maximize'  # maximize, 'minimize'
@@ -228,7 +228,7 @@ def read_image_mask(fragment_id,start_idx=15,end_idx=45):
             image=cv2.flip(image,0)
         images.append(image)
     images = np.stack(images, axis=2)
-    mask = cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
+    mask = cv2.imread(CFG.comp_dataset_path + f"{fragment_id}_inklabels.png", 0)
     # mask = np.pad(mask, [(0, pad0), (0, pad1)], constant_values=0)
     fragment_mask=cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_mask.png", 0)
     if fragment_id=='20230827161846':
@@ -253,7 +253,7 @@ def get_train_valid_dataset():
     valid_masks = []
     valid_xyxys = []
 
-    for fragment_id in ['20230522181603','20230702185752','20230827161847','20230909121925','20230905134255','20230904135535']:
+    for fragment_id in ['20230702185752' ,'20230827161847_crop']: #, '20230522181603' ,'20230909121925', '20230905134255','20230904135535']:
         print('reading ',fragment_id)
         image, mask,fragment_mask = read_image_mask(fragment_id)
         x1_list = list(range(0, image.shape[1]-CFG.tile_size+1, CFG.stride))
@@ -463,7 +463,11 @@ class RegressionPLModel(pl.LightningModule):
         loss1 = self.loss_func(outputs, y)
         y_preds = torch.sigmoid(outputs).to('cpu')
         for i, (x1, y1, x2, y2) in enumerate(xyxys):
-            self.mask_pred[y1:y2, x1:x2] += F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            newmask = F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy()
+            if (self.mask_pred[y1:y2, x1:x2].shape != newmask.shape):
+                print(self.mask_pred[y1:y2, x1:x2])
+                print(newmask.shape)
+            self.mask_pred[y1:y2, x1:x2] += newmask
             self.mask_count[y1:y2, x1:x2] += np.ones((self.hparams.size, self.hparams.size))
 
         self.log("val/total_loss", loss1.item(),on_step=True, on_epoch=True, prog_bar=True)
@@ -521,23 +525,36 @@ def scheduler_step(scheduler, avg_val_loss, epoch):
 
 
 
-fragment_id = CFG.valid_id
-
-valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
+#fragment_id = CFG.valid_id
+#valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"{fragment_id}_inklabels.png", 0)
 # valid_mask_gt=cv2.resize(valid_mask_gt,(valid_mask_gt.shape[1]//2,valid_mask_gt.shape[0]//2),cv2.INTER_AREA)
-pred_shape=valid_mask_gt.shape
+#pred_shape=valid_mask_gt.shape
 torch.set_float32_matmul_precision('medium')
 
-fragments=['20230522181603','20230702185752']
+fragments=['20230702185752'] #,'20230702185752']20230827161847
 enc_i,enc,fold=0,'i3d',0
 for fid in fragments:
     CFG.valid_id=fid
     fragment_id = CFG.valid_id
     run_slug=f'training_scrolls_valid={fragment_id}_{CFG.size}x{CFG.size}_submissionlabels'
 
-    valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"train_scrolls/{fragment_id}/{fragment_id}_inklabels.png", 0)
+    wandb_logger = WandbLogger(project="vesuvius-test",name=run_slug+f'{enc}_finetune',entity='jrudolph')
+
+    print("Loading Checkpoint")
+    model = RegressionPLModel.load_from_checkpoint("model.ckpt")
+    print(model)
+    print(model.mask_pred.shape)
+    
+    wandb_logger.watch(model, log="all", log_freq=100)
+
+    valid_mask_gt = cv2.imread(CFG.comp_dataset_path + f"{fragment_id}_inklabels.png", 0)
 
     pred_shape=valid_mask_gt.shape
+    print(pred_shape)
+    #model.pred_shape=pred_shape
+    model.mask_pred = np.zeros(pred_shape)
+    model.mask_count = np.zeros(pred_shape)
+    
     train_images, train_masks, valid_images, valid_masks, valid_xyxys = get_train_valid_dataset()
     valid_xyxys = np.stack(valid_xyxys)
     train_dataset = CustomDataset(
@@ -555,12 +572,10 @@ for fid in fragments:
                                 shuffle=False,
                                 num_workers=CFG.num_workers, pin_memory=True, drop_last=True)
 
-    wandb_logger = WandbLogger(project="Vesuvius-Repro",name=run_slug+f'{enc}_finetune',entity='vesuvius-10letters')
     norm=fold==1
-    model=RegressionPLModel(enc='i3d',pred_shape=pred_shape,size=CFG.size)
-
+    #model=RegressionPLModel(enc='i3d',pred_shape=pred_shape,size=CFG.size)
     print('FOLD : ',fold)
-    wandb_logger.watch(model, log="all", log_freq=100)
+    
     multiplicative = lambda epoch: 0.9
 
     trainer = pl.Trainer(
