@@ -573,13 +573,13 @@ def predict_fn(test_loader, model, device, test_xyxys,pred_shape):
             mask_pred[y1:y2, x1:x2] += np.multiply(F.interpolate(y_preds[i].unsqueeze(0).float(),scale_factor=4,mode='bilinear').squeeze(0).squeeze(0).numpy(),kernel)
             mask_count[y1:y2, x1:x2] += np.ones((CFG.size, CFG.size))
 
-        if step % 10 == 0:
-            mask_copy = np.divide(mask_pred, mask_count, out=np.zeros_like(mask_pred), where=mask_count!=0)
-            mask_copy=np.clip(np.nan_to_num(mask_copy),a_min=0,a_max=1)
-            mask_copy/=mask_copy.max()
-            mask_copy=(mask_copy*255).astype(np.uint8)
-            mask_copy=Image.fromarray(mask_copy)
-            mask_copy.save(f'{args.out_path}/{fragment_id}_{args.stride}_{args.start_idx}_progress.png')
+        #if step % 10 == 0:
+        #    mask_copy = np.divide(mask_pred, mask_count, out=np.zeros_like(mask_pred), where=mask_count!=0)
+        #    mask_copy=np.clip(np.nan_to_num(mask_copy),a_min=0,a_max=1)
+        #    mask_copy/=mask_copy.max()
+        #    mask_copy=(mask_copy*255).astype(np.uint8)
+        #    mask_copy=Image.fromarray(mask_copy)
+        #    mask_copy.save(f'{args.out_path}/{fragment_id}_{args.stride}_{args.start_idx}_progress.png')
 
     mask_pred /= mask_count
     # mask_pred/=mask_pred.max()
